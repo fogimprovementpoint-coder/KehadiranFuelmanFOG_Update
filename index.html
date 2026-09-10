@@ -4037,6 +4037,14 @@
                 : Number(globalData.fuelmanLSDataStartRow ?? 2) + Number(rowIndex || 0);
             // First use the NRP/row cache from the supplied Picture-in-Cell workbook.
             const nrpValue = normalizePersonKey(row?.[2] ?? '');
+            // Prioritas utama: foto yang dikirim Apps Script berdasarkan NRP.
+            // Ini adalah mapping paling aman karena tidak bergantung pada posisi/baris
+            // gambar di Excel/Google Sheet.
+            const livePhotoByNrp = globalData.fuelmanLSPhotoMap || {};
+            const livePhoto = normalizeEmbeddedPhotoSource(livePhotoByNrp[nrpValue]);
+            if (livePhoto) return livePhoto;
+
+            // Fallback untuk workbook Excel lokal yang memiliki foto embedded.
             const seedByNrp = FUELMAN_LS_EMBEDDED_PHOTO_SEED?.byNrp || {};
             const seedByRow = FUELMAN_LS_EMBEDDED_PHOTO_SEED?.byExcelRow || {};
             const seedPhoto = seedByNrp[nrpValue] || seedByRow[String(actualExcelRow)] || '';
