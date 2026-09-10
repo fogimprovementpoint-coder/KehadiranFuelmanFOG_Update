@@ -1672,7 +1672,11 @@
                 // tambahan. Seed base64 lokal tetap diprioritaskan di fungsi foto.
                 if (result.photoByNrp && typeof result.photoByNrp === 'object') {
                     Object.entries(result.photoByNrp).forEach(([nrp, url]) => {
-                        if (url) globalData.fuelmanLSPhotoMap[String(nrp)] = String(url);
+                        if (!url) return;
+                        const rawKey = String(nrp).trim();
+                        const normalizedKey = normalizeFuelmanLSPhotoNrpKey(rawKey);
+                        if (rawKey) globalData.fuelmanLSPhotoMap[rawKey] = String(url);
+                        if (normalizedKey) globalData.fuelmanLSPhotoMap[normalizedKey] = String(url);
                     });
                 }
 
@@ -3971,6 +3975,20 @@
                 const embeddedPhotos = await extractFuelmanLSEmbeddedPhotos(workbook, sheetName, arrayBuffer);
                 globalData.fuelmanLSPhotoMap = embeddedPhotos?.cellMap || {};
                 globalData.fuelmanLSPhotoByExcelRow = embeddedPhotos?.rowMap || {};
+                // Bentuk mapping foto -> NRP dari baris yang sama. Ini membuat mode
+                // Upload Excel sama amannya dengan mode Live Apps Script.
+                if (globalData.fuelmanLSPhotoByExcelRow && typeof globalData.fuelmanLSPhotoByExcelRow === 'object') {
+                    for (let localIdx = 0; localIdx < globalData.fuelmanLSRows.length; localIdx++) {
+                        const excelRow = Number(globalData.fuelmanLSRowExcelIndexes[localIdx]);
+                        const row = globalData.fuelmanLSRows[localIdx] || [];
+                        const nrp = String(row?.[2] ?? '').trim();
+                        const photo = normalizeEmbeddedPhotoSource(globalData.fuelmanLSPhotoByExcelRow[String(excelRow)]);
+                        if (Number.isFinite(excelRow) && nrp && photo) {
+                            const key = normalizeFuelmanLSPhotoNrpKey(nrp);
+                            if (key) globalData.fuelmanLSPhotoMap[key] = photo;
+                        }
+                    }
+                }
                 globalData.fuelmanLSCellPhotoMap = {};
                 // Dukungan tambahan untuk foto yang disimpan sebagai formula IMAGE() / URL pada kolom M.
                 for (let srcIdx = 0; srcIdx < sourceRows.length; srcIdx++) {
@@ -4024,6 +4042,19 @@
             return '';
         }
 
+        // Harus identik dengan normalisasi NRP di Apps Script.
+        // Apps Script menghapus spasi, tanda baca, dan perbedaan huruf besar/kecil.
+        // Sebelumnya HTML memakai normalizePersonKey() yang mempertahankan tanda '-',
+        // sehingga photoByNrp dari Apps Script tidak pernah cocok dan sistem jatuh
+        // ke mapping berdasarkan nomor baris yang menyebabkan foto bergeser satu baris.
+        function normalizeFuelmanLSPhotoNrpKey(value) {
+            return String(value ?? '')
+                .normalize('NFD')
+                .replace(/[\\u0300-\\u036f]/g, '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '');
+        }
+
         // Fallback photo cache generated from the supplied Fuelman LS workbook.
         // This guarantees Picture-in-Cell images remain available even when the browser
         // cannot load the external JSZip CDN. It is keyed by NRP and Excel row.
@@ -4036,18 +4067,28 @@
                 ? Number(excelRowIndex)
                 : Number(globalData.fuelmanLSDataStartRow ?? 2) + Number(rowIndex || 0);
             // First use the NRP/row cache from the supplied Picture-in-Cell workbook.
-            const nrpValue = normalizePersonKey(row?.[2] ?? '');
-            // Prioritas utama: foto yang dikirim Apps Script berdasarkan NRP.
-            // Ini adalah mapping paling aman karena tidak bergantung pada posisi/baris
-            // gambar di Excel/Google Sheet.
+            const rawNrpValue = String(row?.[2] ?? '').trim();
+            const nrpValue = normalizePersonKey(rawNrpValue);
+            const photoNrpKey = normalizeFuelmanLSPhotoNrpKey(rawNrpValue);
+
+            // PRIORITAS MUTLAK: identitas NRP.
+            // Jangan langsung memakai nomor baris karena rowNumbers/photoByRow dapat
+            // berasal dari sumber yang berbeda (Excel 1-based vs drawing 0-based).
             const livePhotoByNrp = globalData.fuelmanLSPhotoMap || {};
-            const livePhoto = normalizeEmbeddedPhotoSource(livePhotoByNrp[nrpValue]);
+            const livePhoto =
+                normalizeEmbeddedPhotoSource(livePhotoByNrp[photoNrpKey]) ||
+                normalizeEmbeddedPhotoSource(livePhotoByNrp[nrpValue]) ||
+                normalizeEmbeddedPhotoSource(livePhotoByNrp[rawNrpValue]);
             if (livePhoto) return livePhoto;
 
-            // Fallback untuk workbook Excel lokal yang memiliki foto embedded.
+            // Fallback workbook lokal: seed juga dinormalisasi dengan aturan NRP yang sama.
             const seedByNrp = FUELMAN_LS_EMBEDDED_PHOTO_SEED?.byNrp || {};
             const seedByRow = FUELMAN_LS_EMBEDDED_PHOTO_SEED?.byExcelRow || {};
-            const seedPhoto = seedByNrp[nrpValue] || seedByRow[String(actualExcelRow)] || '';
+            let seedPhoto =
+                normalizeEmbeddedPhotoSource(seedByNrp[photoNrpKey]) ||
+                normalizeEmbeddedPhotoSource(seedByNrp[nrpValue]) ||
+                normalizeEmbeddedPhotoSource(seedByNrp[rawNrpValue]);
+            if (!seedPhoto) seedPhoto = normalizeEmbeddedPhotoSource(seedByRow[String(actualExcelRow)]);
             if (seedPhoto) return seedPhoto;
 
 
