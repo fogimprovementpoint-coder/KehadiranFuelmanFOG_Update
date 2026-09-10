@@ -1,4 +1,4 @@
-<!-- GITHUB PAGES READY V18 -->
+<!-- GITHUB PAGES READY V19 - FUELMAN LS VIA APPS SCRIPT -->
 <!DOCTYPE html>
 <html lang="id" class="h-full bg-slate-50">
 <head>
@@ -1340,9 +1340,9 @@
                 );
 
                 // Ambil seluruh Sheet Fuelman LS termasuk foto sebelum popup dipakai.
-                await loadFuelmanLSFromGoogleSheetExport();
+                await loadFuelmanLSFromAppsScript();
                 // Ambil Wali Custodian dari sheet "Fuelman LS" kolom G.
-                await loadFuelmanLSFromGoogleSheetExport();
+                await loadFuelmanLSFromAppsScript();
                 if (result.custodianMap && typeof result.custodianMap === 'object') {
                     setCustodianMap(result.custodianMap);
                 } else {
@@ -1377,7 +1377,7 @@
                     Array.isArray(result.dates) ? result.dates : [],
                     `Live: ${result.sheetName || 'Actual Kehadiran FM'}`
                 );
-                await loadFuelmanLSFromGoogleSheetExport();
+                await loadFuelmanLSFromAppsScript();
                 if (result.custodianMap && typeof result.custodianMap === 'object') {
                     setCustodianMap(result.custodianMap);
                 } else {
@@ -1640,27 +1640,53 @@
             return result;
         }
 
-        // Memuat sheet Fuelman LS langsung dari file XLSX export Google Sheets.
-        // Ini penting karena GViz hanya mengirim nilai cell dan tidak mengirim objek foto.
-        async function loadFuelmanLSFromGoogleSheetExport() {
-            const sheetId = globalData.googleSheetId;
-            const gid = globalData.googleSheetGid;
-            if (!sheetId || !gid || typeof XLSX === 'undefined') return false;
+        // Memuat Sheet Fuelman LS melalui Apps Script JSONP.
+        // Jangan lagi mengambil XLSX langsung dari browser GitHub Pages karena
+        // docs.google.com dapat menolak request lintas-origin/network policy.
+        // Apps Script membaca Sheet secara server-side lalu mengirim data ke dashboard.
+        async function loadFuelmanLSFromAppsScript() {
+            const baseUrl = globalData.portableAppsScriptUrl || globalData.appsScriptUrl;
+            if (!baseUrl) return false;
             try {
-                const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/export?format=xlsx&gid=${encodeURIComponent(gid)}&ts=${Date.now()}`;
-                const response = await fetch(url, { cache: 'no-store', credentials: 'include' });
-                if (!response.ok) throw new Error(`Google Sheets export HTTP ${response.status}`);
-                const buffer = await response.arrayBuffer();
-                const wb = XLSX.read(buffer, { type: 'array', cellFormula: true, cellHTML: true });
-                const sheetName = wb.SheetNames.find(n => normalizeSearchValue(n) === normalizeSearchValue('Fuelman LS')) || 'Fuelman LS';
-                const sheet = wb.Sheets[sheetName];
-                if (!sheet) throw new Error('Sheet Fuelman LS tidak ditemukan pada export Google Sheets.');
-                await captureFuelmanLSData(sheet, wb, sheetName, buffer);
-                return Array.isArray(globalData.fuelmanLSRows) && globalData.fuelmanLSRows.length > 0;
+                const separator = baseUrl.includes('?') ? '&' : '?';
+                const result = await loadAppsScriptJsonp(`${baseUrl}${separator}action=getFuelmanLS`);
+                if (!(result && result.success === true && Array.isArray(result.headers) && Array.isArray(result.rows))) {
+                    throw new Error(result?.error || 'Response Fuelman LS dari Apps Script tidak sesuai.');
+                }
+
+                globalData.fuelmanLSHeaders = result.headers.map((v, i) => String(v ?? '').trim() || `Kolom ${i + 1}`);
+                globalData.fuelmanLSRows = result.rows.map(row => Array.isArray(row) ? row.map(v => String(v ?? '')) : []);
+                globalData.fuelmanLSRowExcelIndexes = Array.isArray(result.rowNumbers)
+                    ? result.rowNumbers.map(v => Number(v)).filter(Number.isFinite)
+                    : [];
+                globalData.fuelmanLSDataStartRow = globalData.fuelmanLSRowExcelIndexes.length
+                    ? globalData.fuelmanLSRowExcelIndexes[0]
+                    : 1;
+                globalData.fuelmanLSPhotoByExcelRow = result.photoByRow && typeof result.photoByRow === 'object'
+                    ? result.photoByRow
+                    : {};
+                globalData.fuelmanLSPhotoMap = {};
+                globalData.fuelmanLSCellPhotoMap = {};
+
+                // Simpan foto yang berhasil diberikan Apps Script sebagai fallback
+                // tambahan. Seed base64 lokal tetap diprioritaskan di fungsi foto.
+                if (result.photoByNrp && typeof result.photoByNrp === 'object') {
+                    Object.entries(result.photoByNrp).forEach(([nrp, url]) => {
+                        if (url) globalData.fuelmanLSPhotoMap[String(nrp)] = String(url);
+                    });
+                }
+
+                return globalData.fuelmanLSRows.length > 0;
             } catch (err) {
-                console.warn('[Fuelman] Export XLSX Google Sheets tidak dapat dibaca:', err);
+                console.warn('[Fuelman] Gagal memuat data Fuelman LS dari Apps Script:', err);
                 return false;
             }
+        }
+
+        // Fallback lama untuk mode upload Excel / sumber workbook lokal.
+        // Fungsi ini sengaja dipertahankan karena dipakai oleh alur upload Excel.
+        async function loadFuelmanLSFromGoogleSheetExport() {
+            return loadFuelmanLSFromAppsScript();
         }
 
         // Fallback untuk mode Live Google Sheets. Mengambil sheet berdasarkan nama,
