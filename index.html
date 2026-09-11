@@ -1340,9 +1340,9 @@
                 );
 
                 // Ambil seluruh Sheet Fuelman LS termasuk foto sebelum popup dipakai.
+                // Cukup satu kali. Respons ini sudah membawa photoByNrp/photoByRow.
                 await loadFuelmanLSFromAppsScript();
                 // Ambil Wali Custodian dari sheet "Fuelman LS" kolom G.
-                await loadFuelmanLSFromAppsScript();
                 if (result.custodianMap && typeof result.custodianMap === 'object') {
                     setCustodianMap(result.custodianMap);
                 } else {
@@ -1717,12 +1717,15 @@
                 window[callbackName] = payload => {
                     try {
                         const rows = payload?.table?.rows || [];
-                        // Simpan seluruh isi Sheet Fuelman LS agar hover profile dapat
-                        // menampilkan semua kolom, bukan hanya Wali Custodian (kolom G).
+                        // Fallback ini hanya untuk mengambil Wali Custodian.
+                        // JANGAN menimpa fuelmanLSPhotoMap/photoByRow dari Apps Script.
+                        // Sebelumnya data foto dihapus di sini sehingga getFuelmanLSPhotoFromRecord()
+                        // jatuh ke fallback nomor baris dan foto bergeser satu baris.
                         const liveCols = payload?.table?.cols || [];
-                        globalData.fuelmanLSHeaders = liveCols.map((c, i) => String(c?.label || c?.id || `Kolom ${i + 1}`).trim() || `Kolom ${i + 1}`);
-                        globalData.fuelmanLSRows = rows.map(rowObj => (rowObj?.c || []).map(c => c?.v ?? ''));
-                        globalData.fuelmanLSPhotoMap = {};
+                        const fallbackHeaders = liveCols.map((c, i) => String(c?.label || c?.id || `Kolom ${i + 1}`).trim() || `Kolom ${i + 1}`);
+                        if (!Array.isArray(globalData.fuelmanLSHeaders) || !globalData.fuelmanLSHeaders.length) {
+                            globalData.fuelmanLSHeaders = fallbackHeaders;
+                        }
                         const result = {};
 
                         employees.forEach(emp => {
